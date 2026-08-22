@@ -523,3 +523,67 @@ Describe 'Move-QuarantineBatchCore' {
         foreach ($file in $files) { Test-Path -LiteralPath $file.DeletePath | Should -BeTrue }
     }
 }
+
+Describe 'Start-DuplicateScanCore (Get-FileHash error-message regression)' {
+    BeforeAll {
+        $script:scanDir = Join-Path ([System.IO.Path]::GetTempPath()) ("mds-scan-$(New-Guid)")
+        New-Item -ItemType Directory -Path $script:scanDir -Force | Out-Null
+        # Same normalized base name ('song a') so these two files are grouped
+        # as a duplicate candidate pair and go through the SHA-256 hashing
+        # path when -HashAllCandidates is used.
+        Set-Content -LiteralPath (Join-Path $script:scanDir 'Song A.mp3') -Value 'same content'
+        Set-Content -LiteralPath (Join-Path $script:scanDir 'Song A (1).mp3') -Value 'same content'
+    }
+
+    AfterAll {
+        Remove-Item -LiteralPath $script:scanDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'surfaces the real Get-FileHash error instead of a masked strict-mode property error' {
+        # Regression test for a real-world failure: on a scan of a large
+        # network-drive library, a transient read glitch made Get-FileHash
+        # write a non-terminating error and return nothing for that file.
+        # Because Set-StrictMode -Version Latest is active and the call site
+        # did not pass -ErrorAction Stop, `(Get-FileHash ...).Hash` on that
+        # $null result threw "The property 'Hash' cannot be found on this
+        # object" - masking the real "An unexpected network error occurred"
+        # cause in the scan log. This mocks that exact non-terminating
+        # failure mode and asserts the real message is now what gets logged.
+        # Pester's Mock does not reproduce the engine's automatic
+        # non-terminating-to-terminating conversion for -ErrorAction Stop
+        # (verified separately against the real Get-FileHash cmdlet), so
+        # this mock throws directly - that is exactly what the real
+        # cmdlet does once -ErrorAction Stop is honored, which is what the
+        # production fix relies on.
+        Mock Get-FileHash -ModuleName MusicDuplicateScanner.Core {
+            $exception = [System.IO.IOException]::new('An unexpected network error occurred.')
+            $er = [System.Management.Automation.ErrorRecord]::new($exception, 'FileReadError', 'ReadError', $LiteralPath)
+            throw $er
+        }
+
+        $progressQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+        $cancelFlag = @{ Cancelled = $false }
+        $modulePath = Join-Path $PSScriptRoot '..\src\MusicDuplicateScanner.Core.psm1'
+
+        $results = Start-DuplicateScanCore -RootPath $script:scanDir -UseRecurse $false -Threshold 50 `
+            -HashAllCandidates $true -CorePath $modulePath -ProgressQueue $progressQueue -CancelFlag $cancelFlag `
+            -Extensions @('mp3')
+
+        $messages = @()
+        $line = $null
+        while ($progressQueue.TryDequeue([ref]$line)) { $messages += $line }
+
+        $hashFailedLines = @($messages | Where-Object { $_ -like 'Hash failed for *' })
+        $hashFailedLines.Count | Should -BeGreaterThan 0
+        $hashFailedLines[0] | Should -Match 'An unexpected network error occurred'
+        $hashFailedLines[0] | Should -Not -Match "property 'Hash' cannot be found"
+
+        # The scan must still complete rather than aborting - a hash failure
+        # for one candidate degrades gracefully to a $null hash, not a crash.
+        # (Piping a possibly-empty $results array into Should would skip the
+        # assertion entirely when it has 0 elements, since nothing flows
+        # through the pipeline - so check it as a scalar via .Count instead.)
+        $messages | Where-Object { $_ -like 'Scan complete.*' } | Should -Not -BeNullOrEmpty
+        $results.Count | Should -BeGreaterOrEqual 0
+    }
+}

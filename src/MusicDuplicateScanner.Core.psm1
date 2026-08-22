@@ -919,7 +919,16 @@ function Start-DuplicateScanCore {
             if ($CancelFlag.Cancelled) { $ProgressQueue.Enqueue('Scan cancelled during hashing.'); return @() }
 
             try {
-                $lookup[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+                # -ErrorAction Stop is required here: Get-FileHash writes
+                # transient I/O failures (e.g. a network-drive read glitch)
+                # as a NON-terminating error and returns nothing for that
+                # item. Without -Stop, the catch block below never runs for
+                # that real failure - instead $() is $null, and under this
+                # module's Set-StrictMode -Version Latest, the subsequent
+                # ".Hash" property access on $null itself throws "The
+                # property 'Hash' cannot be found on this object", which
+                # masks the actual underlying error in the log.
+                $lookup[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
             } catch {
                 $lookup[$path] = $null
                 $ProgressQueue.Enqueue("Hash failed for $path : $($_.Exception.Message)")

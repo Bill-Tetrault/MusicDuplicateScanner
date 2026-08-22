@@ -183,11 +183,22 @@ function Update-ResultsGrid {
 
     if (-not $script:dataGrid) { return }
 
-    $sorted = if ($script:CurrentSortDirection -eq 'Descending') {
-        $Data | Sort-Object -Property $script:CurrentSortColumn -Descending
-    } else {
-        $Data | Sort-Object -Property $script:CurrentSortColumn
-    }
+    # Sort-Object emits no pipeline output at all for zero input items (it
+    # does not emit an empty array), so $sorted becomes $null whenever a
+    # scan returns 0 matches. Casting $null to [object[]] also stays $null
+    # rather than becoming an empty array, so the ObservableCollection
+    # constructor below would receive a literal null "collection" argument
+    # and throw "Value cannot be null. (Parameter 'collection')" - this is
+    # what caused scans with 0 results to crash with "Scan failed" instead
+    # of just showing an empty grid. Force $sorted to a real (possibly
+    # empty) array to guard against that.
+    $sorted = @(
+        if ($script:CurrentSortDirection -eq 'Descending') {
+            $Data | Sort-Object -Property $script:CurrentSortColumn -Descending
+        } else {
+            $Data | Sort-Object -Property $script:CurrentSortColumn
+        }
+    )
 
     $script:dataGrid.ItemsSource = $null
     $script:dataGrid.ItemsSource = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]' (, [object[]]$sorted)
