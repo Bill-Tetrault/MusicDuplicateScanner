@@ -27,7 +27,7 @@ cd MusicDuplicateScanner
 
 ## Step 2 — (Optional, recommended) Add TagLibSharp
 
-TagLibSharp enables reading ID3 tag metadata (title, artist, album, track, year, duration). Without it, the scanner still works via filename similarity, file size, and SHA-256 hash — but tag-based matching is the most reliable strategy for music libraries.
+TagLibSharp enables reading tag metadata (title, artist, album, track, year, duration) across MP3, FLAC, WAV, M4A, OGG, WMA, and AAC — the default file types scanned as of v3.0.0 (configurable in the "File types" field; see [Usage Guide](Usage-Guide)). Without TagLibSharp, the scanner still works via filename similarity, file size, and SHA-256 hash — but tag-based matching is the most reliable strategy for music libraries.
 
 1. Download `TagLibSharp.dll` from [NuGet](https://www.nuget.org/packages/TagLibSharp/) (click **Download package**, rename the `.nupkg` to `.zip`, and extract it; the DLL is under `lib\netstandard2.0\`).
 2. Place `TagLibSharp.dll` in either:

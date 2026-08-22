@@ -37,6 +37,8 @@ The test suite is in `tests/MusicDuplicateScanner.Core.Tests.ps1` and covers:
 - `Get-ConfidenceScore` — weight distribution for filename/tag/hash components
 - `Select-PreferredFile` — bitrate preference, metadata completeness, recency tiebreak, root-vs-subfolder logic (v2.1.0)
 - `Move-QuarantineBatchCore` — progress reporting format, path mapping, error handling
+- `ConvertTo-ExtensionFilterList` (v3.0.0) — default fallback, parsing/dedup, unsafe-token rejection, length cap
+- `Get-MusicFile` (v3.0.0) — single- and multi-extension matching, recursive vs. non-recursive behavior, case-insensitivity
 - Regression tests for the Int32 overflow bug and the single-group array-concatenation crash fixed in v2.0.0
 - Regression tests for `(1)`-suffix detection and year-preservation fixed in v2.0.1
 

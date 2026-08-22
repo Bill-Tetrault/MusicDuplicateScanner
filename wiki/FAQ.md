@@ -51,7 +51,7 @@ Lower the threshold slider to understand why it scored as a candidate, then rais
 
 ### Will it find duplicates in different formats (FLAC, AAC, WAV)?
 
-No. The scanner only processes `.mp3` files. Format-agnostic deduplication is outside the current scope.
+Yes, as of **v3.0.0**. The "File types" field controls which extensions are scanned, and it defaults to `mp3, flac, wav, m4a, ogg, wma, aac`. Set your own comma-separated list (e.g. just `mp3`, or add formats like `opus`) if you want something different — see [Usage Guide](Usage-Guide) and [CLI Parameters](CLI-Parameters).
 
 ---
 
@@ -99,4 +99,4 @@ See [CONTRIBUTING.md](https://github.com/Bill-Tetrault/MusicDuplicateScanner/blo
 
 ### Can I add support for formats other than MP3?
 
-Yes — this would be a welcome contribution. The Core module's file-discovery step filters for `.mp3`; extending it to accept additional extensions (`.flac`, `.m4a`, `.ogg`) via a parameter is straightforward. TagLibSharp supports all common audio formats, so metadata reading would work without changes to `Get-AudioMetadata`.
+This shipped in **v3.0.0** — the "File types" field / `-FileExtensions` parameter now lets you scan any extension, not just MP3 (see [Usage Guide](Usage-Guide)). If you want to go further — e.g. video or image dedupe — that would need a different matching engine (perceptual/frame hashing, resolution/codec scoring) rather than an extension-list change, and is a good candidate for a separate contribution or app; see the "Why extend this app" note in the [Changelog](Changelog).

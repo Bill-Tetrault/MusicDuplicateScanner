@@ -10,9 +10,10 @@ While Music Duplicate Scanner is primarily a GUI application, the entry-point sc
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `-LibraryPath` | `string` | *(last saved setting)* | Absolute path to the MP3 library root to pre-populate the Library Path field |
+| `-LibraryPath` | `string` | *(last saved setting)* | Absolute path to the music library root to pre-populate the Library Path field |
 | `-QuarantinePath` | `string` | *(last saved setting or `<library>/_Quarantine`)* | Absolute path to the quarantine destination |
 | `-Threshold` | `int` (0–100) | *(last saved setting or 70)* | Confidence threshold to pre-set the slider |
+| `-FileExtensions` | `string` | *(last saved setting or `mp3, flac, wav, m4a, ogg, wma, aac`)* | **New in v3.0.0.** Comma-separated extension list to pre-populate the "File types" field, e.g. `'mp3,flac'` |
 
 ## Examples
 
@@ -28,7 +29,8 @@ While Music Duplicate Scanner is primarily a GUI application, the entry-point sc
 .\MusicDuplicateScanner.ps1 \
     -LibraryPath 'D:\Music' \
     -QuarantinePath 'E:\Music_Quarantine' \
-    -Threshold 80
+    -Threshold 80 \
+    -FileExtensions 'mp3,flac,wav'
 ```
 
 **Bypass execution policy for a single session:**
@@ -46,7 +48,7 @@ pwsh -File .\MusicDuplicateScanner.ps1 -LibraryPath 'D:\Music'
 
 ## Settings persistence
 
-Settings (library path, quarantine path, threshold, checkbox states) are written to:
+Settings (library path, quarantine path, threshold, file extensions, checkbox states) are written to:
 
 ```
 %LOCALAPPDATA%\MusicDuplicateScanner\settings.json
@@ -60,8 +62,9 @@ There is currently no `-Headless` or `-AutoScan` flag. The application always op
 
 ```powershell
 Import-Module .\src\MusicDuplicateScanner.Core.psm1
-$results = Start-DuplicateScanCore -RootPath 'D:\Music' -Recurse -ComputeHash
+$results = Start-DuplicateScanCore -RootPath 'D:\Music' -Recurse -ComputeHash `
+    -Extensions @('mp3', 'flac', 'wav')
 $results | Export-Csv -Path 'duplicates.csv' -NoTypeInformation
 ```
 
-The Core module has no WPF dependency and runs on any platform that supports PowerShell 7.
+The Core module has no WPF dependency and runs on any platform that supports PowerShell 7. `-Extensions` is optional — omit it to fall back to the default set (`mp3, flac, wav, m4a, ogg, wma, aac`). Any values you pass are re-validated internally via `ConvertTo-ExtensionFilterList` (added in v3.0.0), so this is safe to call with unsanitized input from your own scripts.

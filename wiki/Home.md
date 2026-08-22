@@ -14,17 +14,18 @@ Welcome to the **MusicDuplicateScanner** wiki. Use the sidebar (or the links bel
 | [CLI Parameters](CLI-Parameters) | Startup flags for scripted/headless launches |
 | [Architecture](Architecture) | Code layout, Core/GUI split, and design decisions |
 | [Development](Development) | Local setup, lint, Pester tests, CI pipeline |
-| [Changelog](Changelog) | Version history (v1.0.0 → v2.1.0) |
+| [Changelog](Changelog) | Version history (v1.0.0 → v3.0.0) |
 | [FAQ](FAQ) | Common questions and troubleshooting |
 
 ## What is Music Duplicate Scanner?
 
-Music Duplicate Scanner is a Windows WPF desktop application written in PowerShell that finds likely-duplicate `.mp3` files in your library, scores each candidate pair by confidence, and lets you **quarantine** (not permanently delete) the ones you want removed — with a one-click undo.
+Music Duplicate Scanner is a Windows WPF desktop application written in PowerShell that finds likely-duplicate audio files in your library, scores each candidate pair by confidence, and lets you **quarantine** (not permanently delete) the ones you want removed — with a one-click undo. As of **v3.0.0**, the file types it scans are configurable — it defaults to `mp3, flac, wav, m4a, ogg, wma, aac`, and you can narrow or widen that list yourself.
 
 ### Key properties
 
 - **Non-destructive by design.** Files are moved to a quarantine folder that preserves your original subfolder structure. A per-run undo manifest lets you restore everything.
-- **Three detection strategies.** Filename similarity, ID3 tag metadata, and optional SHA-256 hash comparison — all combined into a single weighted confidence score.
+- **Three detection strategies.** Filename similarity, tag metadata, and optional SHA-256 hash comparison — all combined into a single weighted confidence score.
+- **Configurable file types (v3.0.0+).** Not limited to MP3 — set any comma-separated extension list in the "File types" field, sanitized and validated before it ever reaches the filesystem.
 - **Background processing.** Scanning and hashing run off the UI thread. The window stays responsive with a live progress bar and a Cancel button.
 - **Settings persist.** Library path, quarantine path, threshold, and options are saved between launches under `%LOCALAPPDATA%\MusicDuplicateScanner\`.
 - **Live quarantine progress.** File moves report per-file status in a determinate progress bar, so you know exactly where a large batch stands.

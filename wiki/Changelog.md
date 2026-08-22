@@ -4,6 +4,24 @@ Full version history for Music Duplicate Scanner. Follows [Keep a Changelog](htt
 
 ---
 
+## v3.0.0
+
+### Added
+
+- **Configurable file types.** A new "File types" field (GUI) / `-FileExtensions` startup parameter and `FileExtensions` setting let you choose which extensions to scan, comma-separated (e.g. `mp3, flac, wav`). The default is now `mp3, flac, wav, m4a, ogg, wma, aac` instead of MP3-only. TagLibSharp already reads tags for all of these formats without any changes to `Get-AudioMetadata`, and the filename/hash/quarantine logic was already extension-agnostic — only file enumeration was hardcoded to `.mp3`.
+- **`ConvertTo-ExtensionFilterList`** (new, exported, unit tested): sanitizes the free-text extension list — strips leading dots/wildcards, lowercases, dedupes, caps at 50 entries, and drops any token that isn't a plain `[a-z0-9]{1,15}` string — before it can reach file enumeration. Runs both at the GUI boundary and again inside `Start-DuplicateScanCore` for defense in depth.
+- **`Get-MusicFile`** now takes an `-Extensions` array and matches all of them in a single directory pass via a case-insensitive `HashSet` lookup, avoiding a verified `-Include`/non-recursive footgun (see [Architecture](Architecture) for details).
+
+### Changed
+
+- `settings.json` files from earlier versions are auto-backfilled with the new `FileExtensions` default on load — no migration step needed.
+
+### Notes
+
+- Evaluated jointly as a DevSecOps + Marketing decision: extending this app with configurable audio extensions was chosen over spinning off a separate video/image dedupe app, since video/image matching needs a fundamentally different engine (perceptual hashing, resolution/codec scoring) and a generic rebrand would dilute this app's focused niche. See the main repo `CHANGELOG.md` for the full rationale.
+
+---
+
 ## v2.1.0
 
 ### Added

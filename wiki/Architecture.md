@@ -34,7 +34,9 @@ The Core module contains all business logic and has **zero WPF/UI dependencies**
 |---|---|
 | `ConvertTo-NormalizedTrackName` | Strips noise tokens from a filename for similarity comparison |
 | `Get-JaccardSimilarity` | Computes Jaccard coefficient between two token sets |
-| `Get-AudioMetadata` | Reads ID3 tags via TagLibSharp (or returns empty object if unavailable) |
+| `Get-AudioMetadata` | Reads tag metadata via TagLibSharp for any supported format (or returns empty object if unavailable) |
+| `Get-MusicFile` | Enumerates library files matching a configurable, sanitized `-Extensions` list (v3.0.0+; MP3-only before) |
+| `ConvertTo-ExtensionFilterList` | **New in v3.0.0.** Parses and sanitizes a free-text extension list (dedupe, lowercase, strip glob/path characters, cap at 50) before it reaches file enumeration |
 | `Get-DuplicateCandidatePair` | Groups files into candidate pairs by filename and/or tag grouping |
 | `Get-ConfidenceScore` | Scores a candidate pair (0–100) from filename sim + tag match + hash |
 | `Select-PreferredFile` | Picks which file in a pair to keep based on quality, metadata, recency |
@@ -87,3 +89,11 @@ WPF assemblies only load on Windows. Moving all logic into `Core.psm1` means Pes
 ### Why move to quarantine instead of delete?
 
 Permanent deletion is an irreversible action on a file library users care about. The quarantine-with-manifest approach trades a small amount of disk space for the ability to recover from mistakes.
+
+### Why HashSet lookup instead of `-Include` for multi-extension scanning? (v3.0.0)
+
+`Get-ChildItem -Include @('*.mp3','*.flac')` looks like the obvious way to match multiple extensions, but it was empirically verified to silently return **zero files** on a non-recursive scan unless `-Path` ends in a trailing wildcard — a documented PowerShell quirk that would otherwise make non-recursive multi-format scans quietly find nothing. `Get-MusicFile` instead takes a single `Get-ChildItem -File` pass and filters in-memory against a case-insensitive `HashSet[string]`, which works identically whether `-Recurse` is set or not and costs O(1) per file regardless of how many extensions are configured.
+
+### Why sanitize extensions in a dedicated function? (v3.0.0)
+
+The "File types" field is free text, and it feeds directly into file enumeration. `ConvertTo-ExtensionFilterList` is the single point where that untrusted input is validated — every token must match `^[a-z0-9]{1,15}$` after stripping leading dots/wildcards, or it's silently dropped. This means path separators, `..` segments, and glob/regex metacharacters can never reach the filesystem filter, and a garbage or empty input falls back to the default extension list rather than matching zero files (or, worse, every file).

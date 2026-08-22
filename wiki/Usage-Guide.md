@@ -6,7 +6,7 @@ This page walks through the GUI from start to finish for a typical scan-review-q
 
 | Field | Description |
 |---|---|
-| **Library Path** | Root folder of your MP3 library. The scanner recurses subdirectories unless you uncheck "Include subfolders". |
+| **Library Path** | Root folder of your music library. The scanner recurses subdirectories unless you uncheck "Include subfolders". |
 | **Quarantine Path** | Where duplicates are moved. Defaults to `<library>/_Quarantine` if left blank. |
 
 Click **Browse** next to each field, or type paths directly. The quarantine folder does not need to exist — it is created automatically.
@@ -15,6 +15,7 @@ Click **Browse** next to each field, or type paths directly. The quarantine fold
 
 ## 2 — Configure options
 
+- **File types** (added in v3.0.0) — A comma-separated list of extensions to scan, e.g. `mp3, flac, wav`. Defaults to `mp3, flac, wav, m4a, ogg, wma, aac`. Leading dots, wildcards, and extra whitespace are tolerated and cleaned up automatically; entries that aren't valid extensions are dropped rather than blocking the scan. If you clear the field entirely or leave only invalid entries, the scanner falls back to the default list rather than matching zero (or every) file.
 - **Include subfolders** — Recursively scans all subdirectories. Uncheck to scan only the top-level folder.
 - **Compute SHA-256 for candidate matches** — Hashes every candidate pair after filename/tag comparison. Slower (especially on large libraries), but confirms exact byte-for-byte matches and enables the "prefer the filed copy over the root copy" logic introduced in v2.1.0.
 
