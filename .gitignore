@@ -1,0 +1,16 @@
+# Third-party binary dependency - fetch it yourself (see README), don't commit it
+lib/TagLibSharp.dll
+TagLibSharp.dll
+
+# Scan artifacts / local settings that should never end up in the repo
+*.log
+testResults.xml
+duplicate-delete-list.csv
+quarantine-manifests/
+
+# Editor / OS noise
+.vscode/
+.vs/
+*.swp
+.DS_Store
+Thumbs.db

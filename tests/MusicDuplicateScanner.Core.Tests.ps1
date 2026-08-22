@@ -1,0 +1,417 @@
+#requires -Version 5.1
+<#
+    Pester tests for MusicDuplicateScanner.Core.psm1
+    Run with: Invoke-Pester -Path ./tests -Output Detailed
+    These tests are pure-logic and run on any OS (no WPF dependency).
+#>
+
+BeforeAll {
+    $modulePath = Join-Path $PSScriptRoot '..\src\MusicDuplicateScanner.Core.psm1'
+    Import-Module $modulePath -Force
+}
+
+Describe 'ConvertTo-NormalizedTrackName' {
+    It 'lower-cases and strips the extension' {
+        ConvertTo-NormalizedTrackName -Name 'Song Title.mp3' | Should -Be 'song title'
+    }
+
+    It 'removes bracketed annotations' {
+        ConvertTo-NormalizedTrackName -Name 'Song [Explicit] (2019).mp3' | Should -Be 'song 2019'
+    }
+
+    It 'removes noise words like copy/remaster/edit' {
+        ConvertTo-NormalizedTrackName -Name 'Song - Copy (Remastered).mp3' | Should -Be 'song'
+    }
+
+    It 'collapses punctuation and repeated whitespace' {
+        ConvertTo-NormalizedTrackName -Name "Song__Title---2!!.mp3" | Should -Be 'song title 2'
+    }
+
+    It 'returns empty string for null/empty input' {
+        ConvertTo-NormalizedTrackName -Name '' | Should -Be ''
+        ConvertTo-NormalizedTrackName -Name $null | Should -Be ''
+    }
+
+    It 'strips a trailing Windows-style copy counter like (1)' {
+        # Regression test: without this, 'Song A.mp3' and 'Song A (1).mp3' -
+        # Windows' own auto-numbering when a file is copied into the same
+        # folder, the single most common real-world duplicate pattern -
+        # normalized to different strings and were never grouped as
+        # duplicate candidates at all.
+        ConvertTo-NormalizedTrackName -Name 'Song A.mp3' | Should -Be 'song a'
+        ConvertTo-NormalizedTrackName -Name 'Song A (1).mp3' | Should -Be 'song a'
+        ConvertTo-NormalizedTrackName -Name 'Song A (2).mp3' | Should -Be 'song a'
+    }
+
+    It 'strips a trailing "- Copy" / "- Copy (N)" suffix' {
+        ConvertTo-NormalizedTrackName -Name 'Song A - Copy.mp3' | Should -Be 'song a'
+        ConvertTo-NormalizedTrackName -Name 'Song A - Copy (2).mp3' | Should -Be 'song a'
+    }
+
+    It 'does not treat a 4-digit trailing year as a copy counter' {
+        # Guards against a naive fix for the copy-counter case above
+        # regressing this pre-existing, intentional behavior: a bracketed
+        # release year must be preserved as a meaningful token, not
+        # stripped like a 1-2 digit copy counter.
+        ConvertTo-NormalizedTrackName -Name 'Song [Explicit] (2019).mp3' | Should -Be 'song 2019'
+    }
+}
+
+Describe 'Get-JaccardSimilarity' {
+    It 'returns 1.0 for two empty sets' {
+        $l = New-Object 'System.Collections.Generic.HashSet[string]'
+        $r = New-Object 'System.Collections.Generic.HashSet[string]'
+        Get-JaccardSimilarity -Left $l -Right $r | Should -Be 1.0
+    }
+
+    It 'returns 1.0 for identical token sets' {
+        $l = Get-NameTokenSet -Name 'song title.mp3'
+        $r = Get-NameTokenSet -Name 'song title.mp3'
+        Get-JaccardSimilarity -Left $l -Right $r | Should -Be 1.0
+    }
+
+    It 'returns 0.0 for completely disjoint sets' {
+        $l = Get-NameTokenSet -Name 'alpha beta.mp3'
+        $r = Get-NameTokenSet -Name 'gamma delta.mp3'
+        Get-JaccardSimilarity -Left $l -Right $r | Should -Be 0.0
+    }
+
+    It 'returns a partial score for partially overlapping names' {
+        $l = Get-NameTokenSet -Name 'song title live.mp3'
+        $r = Get-NameTokenSet -Name 'song title.mp3'
+        $result = Get-JaccardSimilarity -Left $l -Right $r
+        $result | Should -BeGreaterThan 0.0
+        $result | Should -BeLessThan 1.0
+    }
+}
+
+Describe 'Test-ValueMatch' {
+    It 'matches case-insensitively and trims whitespace' {
+        Test-ValueMatch ' Foo Fighters ' 'foo fighters' | Should -BeTrue
+    }
+
+    It 'does not match when either side is null or blank' {
+        Test-ValueMatch $null 'foo' | Should -BeFalse
+        Test-ValueMatch '' 'foo' | Should -BeFalse
+        Test-ValueMatch '   ' '   ' | Should -BeFalse
+    }
+
+    It 'does not match different values' {
+        Test-ValueMatch 'foo' 'bar' | Should -BeFalse
+    }
+}
+
+Describe 'Get-ConfidenceDetails' {
+    It 'scores an exact hash match as 100 / Very High' {
+        $left = [pscustomobject]@{ Hash = 'ABC123'; NameTokens = (Get-NameTokenSet 'a.mp3') }
+        $right = [pscustomobject]@{ Hash = 'ABC123'; NameTokens = (Get-NameTokenSet 'b.mp3') }
+        $details = Get-ConfidenceDetails -Left $left -Right $right
+        $details.Score | Should -Be 100
+        $details.ExactHashMatch | Should -BeTrue
+        $details.Recommendation | Should -Be 'Very High'
+    }
+
+    It 'never exceeds a score of 100 even with many matching signals' {
+        $left = [pscustomobject]@{
+            Hash = $null; NameTokens = (Get-NameTokenSet 'song title.mp3')
+            Title = 'Song'; Artists = 'Band'; Album = 'Album'; Track = 1; Year = 2020
+            DurationSeconds = 200; Size = 5000000
+        }
+        $right = [pscustomobject]@{
+            Hash = $null; NameTokens = (Get-NameTokenSet 'song title.mp3')
+            Title = 'Song'; Artists = 'Band'; Album = 'Album'; Track = 1; Year = 2020
+            DurationSeconds = 200; Size = 5000000
+        }
+        $details = Get-ConfidenceDetails -Left $left -Right $right
+        $details.Score | Should -BeLessOrEqual 100
+    }
+
+    It 'scores unrelated files as Low' {
+        $left = [pscustomobject]@{
+            Hash = $null; NameTokens = (Get-NameTokenSet 'alpha.mp3')
+            Title = $null; Artists = $null; Album = $null; Track = $null; Year = $null
+            DurationSeconds = $null; Size = $null
+        }
+        $right = [pscustomobject]@{
+            Hash = $null; NameTokens = (Get-NameTokenSet 'zzz-completely-different.mp3')
+            Title = $null; Artists = $null; Album = $null; Track = $null; Year = $null
+            DurationSeconds = $null; Size = $null
+        }
+        $details = Get-ConfidenceDetails -Left $left -Right $right
+        $details.Recommendation | Should -Be 'Low'
+    }
+
+    It 'does not throw when optional tag properties are entirely absent from the object' {
+        $left = [pscustomobject]@{ Hash = $null; NameTokens = (Get-NameTokenSet 'a.mp3') }
+        $right = [pscustomobject]@{ Hash = $null; NameTokens = (Get-NameTokenSet 'b.mp3') }
+        { Get-ConfidenceDetails -Left $left -Right $right } | Should -Not -Throw
+    }
+}
+
+Describe 'Select-PreferredFile (Int32 overflow regression)' {
+    It 'does not throw when LastWriteTime produces a large 64-bit tick value' {
+        # This mirrors the real-world failure: raw FileTimeUtc values like
+        # 134317609806497344 overflow Int32.MaxValue (2,147,483,647) when
+        # cast with [int]. The fix must handle this without throwing.
+        $a = [pscustomobject]@{
+            Bitrate = 320; SampleRate = 44100; Size = 8000000
+            MetadataStatus = 'OK'; LastWriteTime = (Get-Date '2024-06-01')
+        }
+        $b = [pscustomobject]@{
+            Bitrate = 128; SampleRate = 44100; Size = 3000000
+            MetadataStatus = 'Unavailable'; LastWriteTime = (Get-Date '2010-01-01')
+        }
+
+        { Select-PreferredFile -A $a -B $b } | Should -Not -Throw
+    }
+
+    It 'prefers the higher-bitrate, more-complete-metadata file' {
+        $high = [pscustomobject]@{
+            Bitrate = 320; SampleRate = 44100; Size = 8000000
+            MetadataStatus = 'OK'; LastWriteTime = (Get-Date '2024-06-01')
+        }
+        $low = [pscustomobject]@{
+            Bitrate = 128; SampleRate = 44100; Size = 3000000
+            MetadataStatus = 'Unavailable'; LastWriteTime = (Get-Date '2010-01-01')
+        }
+
+        $result = Select-PreferredFile -A $high -B $low
+        $result.Keep | Should -Be $high
+        $result.Delete | Should -Be $low
+    }
+
+    It 'handles a maximum-representable DateTime without throwing' {
+        $a = [pscustomobject]@{
+            Bitrate = 320; SampleRate = 44100; Size = 8000000
+            MetadataStatus = 'OK'; LastWriteTime = [datetime]::MaxValue
+        }
+        $b = [pscustomobject]@{
+            Bitrate = 320; SampleRate = 44100; Size = 8000000
+            MetadataStatus = 'OK'; LastWriteTime = (Get-Date '2010-01-01')
+        }
+
+        { Select-PreferredFile -A $a -B $b } | Should -Not -Throw
+    }
+}
+
+Describe 'Select-PreferredFile (exact-hash folder-vs-root tie-break)' {
+    It 'prefers the copy inside a subfolder over the one at the library root when hashes match' {
+        $atRoot = [pscustomobject]@{
+            Path = 'C:\Music\Song.mp3'; Directory = 'C:\Music'
+            Bitrate = 320; SampleRate = 44100; Size = 8000000
+            MetadataStatus = 'OK'; LastWriteTime = (Get-Date '2024-06-01')
+            Hash = 'ABC123'
+        }
+        $inFolder = [pscustomobject]@{
+            Path = 'C:\Music\Artist\Album\Song.mp3'; Directory = 'C:\Music\Artist\Album'
+            Bitrate = 320; SampleRate = 44100; Size = 8000000
+            MetadataStatus = 'OK'; LastWriteTime = (Get-Date '2024-06-01')
+            Hash = 'ABC123'
+        }
+
+        $result = Select-PreferredFile -A $atRoot -B $inFolder -RootPath 'C:\Music'
+        $result.Keep | Should -Be $inFolder
+        $result.Delete | Should -Be $atRoot
+
+        # Order of A/B should not matter.
+        $result2 = Select-PreferredFile -A $inFolder -B $atRoot -RootPath 'C:\Music'
+        $result2.Keep | Should -Be $inFolder
+        $result2.Delete | Should -Be $atRoot
+    }
+
+    It 'falls through to normal scoring when hashes do not match' {
+        $atRoot = [pscustomobject]@{
+            Directory = 'C:\Music'
+            Bitrate = 128; SampleRate = 44100; Size = 3000000
+            MetadataStatus = 'Unavailable'; LastWriteTime = (Get-Date '2010-01-01')
+            Hash = 'AAA'
+        }
+        $inFolder = [pscustomobject]@{
+            Directory = 'C:\Music\Artist'
+            Bitrate = 320; SampleRate = 44100; Size = 8000000
+            MetadataStatus = 'OK'; LastWriteTime = (Get-Date '2024-06-01')
+            Hash = 'BBB'
+        }
+
+        # Hashes differ, so the folder-vs-root rule must not apply; the
+        # higher-bitrate/more-complete-metadata file should win as usual,
+        # even though it also happens to be the one in a subfolder here.
+        $result = Select-PreferredFile -A $atRoot -B $inFolder -RootPath 'C:\Music'
+        $result.Keep | Should -Be $inFolder
+        $result.Delete | Should -Be $atRoot
+    }
+
+    It 'falls through to normal scoring when RootPath is not supplied' {
+        $atRoot = [pscustomobject]@{
+            Directory = 'C:\Music'
+            Bitrate = 320; SampleRate = 44100; Size = 8000000
+            MetadataStatus = 'OK'; LastWriteTime = (Get-Date '2024-06-01')
+            Hash = 'ABC123'
+        }
+        $inFolder = [pscustomobject]@{
+            Directory = 'C:\Music\Artist'
+            Bitrate = 128; SampleRate = 44100; Size = 3000000
+            MetadataStatus = 'Unavailable'; LastWriteTime = (Get-Date '2010-01-01')
+            Hash = 'ABC123'
+        }
+
+        # Same hash, but no -RootPath given: cannot determine "at root", so
+        # falls through to quality scoring, where the higher-bitrate file
+        # (the one at root here) wins.
+        { Select-PreferredFile -A $atRoot -B $inFolder } | Should -Not -Throw
+        $result = Select-PreferredFile -A $atRoot -B $inFolder
+        $result.Keep | Should -Be $atRoot
+    }
+
+    It 'does not throw when Hash/Directory properties are absent (older fixtures)' {
+        $a = [pscustomobject]@{ Bitrate = 320; SampleRate = 44100; Size = 8000000; MetadataStatus = 'OK'; LastWriteTime = (Get-Date) }
+        $b = [pscustomobject]@{ Bitrate = 128; SampleRate = 44100; Size = 3000000; MetadataStatus = 'Unavailable'; LastWriteTime = (Get-Date) }
+        { Select-PreferredFile -A $a -B $b -RootPath 'C:\Music' } | Should -Not -Throw
+    }
+}
+
+Describe 'Get-DuplicateCandidatePair' {
+    It 'pairs files that share a normalized base name' {
+        $items = @(
+            [pscustomobject]@{ Path = 'C:\a\song.mp3'; BaseNameNormalized = 'song'; MetadataKey = $null }
+            [pscustomobject]@{ Path = 'C:\b\song copy.mp3'; BaseNameNormalized = 'song'; MetadataKey = $null }
+            [pscustomobject]@{ Path = 'C:\c\unrelated.mp3'; BaseNameNormalized = 'unrelated'; MetadataKey = $null }
+        )
+
+        $pairs = Get-DuplicateCandidatePair -Items $items
+        $pairs.Count | Should -Be 1
+    }
+
+    It 'pairs files that share a metadata key even with different names' {
+        $items = @(
+            [pscustomobject]@{ Path = 'C:\a\1.mp3'; BaseNameNormalized = 'one'; MetadataKey = 'k1' }
+            [pscustomobject]@{ Path = 'C:\b\2.mp3'; BaseNameNormalized = 'two'; MetadataKey = 'k1' }
+        )
+
+        $pairs = Get-DuplicateCandidatePair -Items $items
+        $pairs.Count | Should -Be 1
+    }
+
+    It 'does not pair a lone file with no matches' {
+        $items = @(
+            [pscustomobject]@{ Path = 'C:\a\only.mp3'; BaseNameNormalized = 'only'; MetadataKey = $null }
+        )
+        $pairs = Get-DuplicateCandidatePair -Items $items
+        $pairs.Count | Should -Be 0
+    }
+}
+
+Describe 'Get-QuarantineDestinationPath' {
+    It 'preserves drive and folder structure under the quarantine root' {
+        $dest = Get-QuarantineDestinationPath -SourcePath 'C:\Music\Artist\song.mp3' `
+            -QuarantineRoot 'D:\Quarantine' -ExistsTest { $false }
+        $dest | Should -Be 'D:\Quarantine\C\Music\Artist\song.mp3'
+    }
+
+    It 'handles UNC source paths with a dedicated bucket' {
+        $dest = Get-QuarantineDestinationPath -SourcePath '\\nas\Music\Artist\song.mp3' `
+            -QuarantineRoot 'D:\Quarantine' -ExistsTest { $false }
+        $dest | Should -Be 'D:\Quarantine\UNC\nas\Music\Artist\song.mp3'
+    }
+
+    It 'appends a timestamp suffix when the destination already exists' {
+        $dest = Get-QuarantineDestinationPath -SourcePath 'C:\Music\Artist\song.mp3' `
+            -QuarantineRoot 'D:\Quarantine' -ExistsTest { $true }
+        $dest | Should -Match 'song\.\d{8}-\d{9}\.mp3$'
+    }
+}
+
+Describe 'Settings persistence' {
+    It 'round-trips settings through JSON' {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "settings-$([guid]::NewGuid()).json"
+        try {
+            $settings = Get-DefaultAppSettings
+            $settings.LibraryPath = 'C:\Music'
+            $settings.Threshold = 80
+            Export-AppSettings -Settings $settings -Path $tmp
+
+            $loaded = Import-AppSettings -Path $tmp
+            $loaded.LibraryPath | Should -Be 'C:\Music'
+            $loaded.Threshold | Should -Be 80
+        } finally {
+            Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'returns defaults when the settings file does not exist' {
+        $settings = Import-AppSettings -Path (Join-Path ([System.IO.Path]::GetTempPath()) 'does-not-exist.json')
+        $settings.Threshold | Should -Be 75
+    }
+}
+
+Describe 'Move-QuarantineBatchCore' {
+    BeforeEach {
+        $script:testRoot = Join-Path ([System.IO.Path]::GetTempPath()) "mds-quarantine-$([guid]::NewGuid())"
+        $script:sourceDir = Join-Path $script:testRoot 'source'
+        $script:quarantineDir = Join-Path $script:testRoot 'quarantine'
+        New-Item -ItemType Directory -Path $script:sourceDir -Force | Out-Null
+    }
+
+    AfterEach {
+        Remove-Item -LiteralPath $script:testRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'moves every selected file and reports one Moved count per file' {
+        $files = 1..3 | ForEach-Object {
+            $path = Join-Path $script:sourceDir "song$_.mp3"
+            Set-Content -LiteralPath $path -Value 'data'
+            [pscustomobject]@{ DeletePath = $path }
+        }
+
+        $result = Move-QuarantineBatchCore -SelectedRows $files -QuarantineRoot $script:quarantineDir
+
+        $result.Moved | Should -Be 3
+        $result.Failed | Should -Be 0
+        $result.Total | Should -Be 3
+        $result.ManifestEntries.Count | Should -Be 3
+        foreach ($file in $files) { Test-Path -LiteralPath $file.DeletePath | Should -BeFalse }
+    }
+
+    It 'reports incremental progress through the ProgressQueue with index/total prefixes' {
+        $files = 1..2 | ForEach-Object {
+            $path = Join-Path $script:sourceDir "track$_.mp3"
+            Set-Content -LiteralPath $path -Value 'data'
+            [pscustomobject]@{ DeletePath = $path }
+        }
+        $queue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+
+        Move-QuarantineBatchCore -SelectedRows $files -QuarantineRoot $script:quarantineDir -ProgressQueue $queue | Out-Null
+
+        $messages = @()
+        $line = $null
+        while ($queue.TryDequeue([ref]$line)) { $messages += $line }
+
+        $messages.Count | Should -Be 2
+        $messages[0] | Should -Match '^PROGRESS:1:2:'
+        $messages[1] | Should -Match '^PROGRESS:2:2:'
+    }
+
+    It 'skips files that no longer exist without throwing' {
+        $missing = [pscustomobject]@{ DeletePath = (Join-Path $script:sourceDir 'ghost.mp3') }
+
+        { Move-QuarantineBatchCore -SelectedRows @($missing) -QuarantineRoot $script:quarantineDir } | Should -Not -Throw
+        $result = Move-QuarantineBatchCore -SelectedRows @($missing) -QuarantineRoot $script:quarantineDir
+        $result.Moved | Should -Be 0
+        $result.Failed | Should -Be 0
+    }
+
+    It 'stops early and marks Cancelled when CancelFlag.Cancelled is set' {
+        $files = 1..3 | ForEach-Object {
+            $path = Join-Path $script:sourceDir "cancel$_.mp3"
+            Set-Content -LiteralPath $path -Value 'data'
+            [pscustomobject]@{ DeletePath = $path }
+        }
+        $cancelFlag = @{ Cancelled = $true }
+
+        $result = Move-QuarantineBatchCore -SelectedRows $files -QuarantineRoot $script:quarantineDir -CancelFlag $cancelFlag
+
+        $result.Cancelled | Should -BeTrue
+        $result.Moved | Should -Be 0
+        foreach ($file in $files) { Test-Path -LiteralPath $file.DeletePath | Should -BeTrue }
+    }
+}
