@@ -1,9 +1,11 @@
 #requires -Version 5.1
 <#
     .SYNOPSIS
-        Music Duplicate Scanner - finds likely-duplicate MP3 files by
-        filename similarity and tag metadata, scores confidence, and moves
-        chosen duplicates to a reversible quarantine folder.
+        Music Duplicate Scanner - finds likely-duplicate audio files
+        (MP3, FLAC, WAV, M4A, OGG, WMA, AAC, and any other extension you
+        configure) by filename similarity and tag metadata, scores
+        confidence, and moves chosen duplicates to a reversible quarantine
+        folder.
 
     .DESCRIPTION
         WPF desktop GUI for Windows PowerShell 5.1+ / PowerShell 7+ on
@@ -22,6 +24,11 @@
 
     .PARAMETER Threshold
         Pre-fills the confidence threshold slider (0-100). Optional.
+
+    .PARAMETER FileExtensions
+        Pre-fills the "File types" field with a comma-separated extension
+        list (e.g. 'mp3,flac,wav'). Defaults to mp3, flac, wav, m4a, ogg,
+        wma, aac when not set and no prior setting exists. Optional.
 
     .EXAMPLE
         .\MusicDuplicateScanner.ps1
@@ -43,7 +50,8 @@ param(
     [string]$LibraryPath,
     [string]$QuarantinePath,
     [ValidateRange(0, 100)]
-    [int]$Threshold
+    [int]$Threshold,
+    [string]$FileExtensions
 )
 
 # ---------------------------------------------------------------------------
@@ -79,6 +87,7 @@ $script:Settings = Import-AppSettings -Path $script:SettingsPath
 if ($LibraryPath) { $script:Settings.LibraryPath = $LibraryPath }
 if ($QuarantinePath) { $script:Settings.QuarantinePath = $QuarantinePath }
 if ($PSBoundParameters.ContainsKey('Threshold')) { $script:Settings.Threshold = $Threshold }
+if ($FileExtensions) { $script:Settings.FileExtensions = $FileExtensions }
 
 $script:LastScanResults = @()
 $script:CurrentSortColumn = 'Confidence'
@@ -114,6 +123,7 @@ function Save-CurrentSettings {
     $script:Settings.Recurse = [bool]$script:chkRecurse.IsChecked
     $script:Settings.ComputeHash = [bool]$script:chkHash.IsChecked
     $script:Settings.Threshold = [int]$script:sldThreshold.Value
+    $script:Settings.FileExtensions = $script:txtExtensions.Text
     Export-AppSettings -Settings $script:Settings -Path $script:SettingsPath
 }
 
@@ -130,7 +140,8 @@ function Start-BackgroundScan {
         [string]$RootPath,
         [bool]$UseRecurse,
         [int]$Threshold,
-        [bool]$HashAllCandidates
+        [bool]$HashAllCandidates,
+        [string[]]$Extensions
     )
 
     $corePath = Join-Path $PSScriptRoot 'MusicDuplicateScanner.Core.psm1'
@@ -150,14 +161,14 @@ function Start-BackgroundScan {
     # unbound instead of defining a callable function).
     $ps = [System.Management.Automation.PowerShell]::Create()
     $ps.AddScript({
-        param($RootPath, $UseRecurse, $Threshold, $HashAllCandidates, $CorePath, $ProgressQueue, $CancelState)
+        param($RootPath, $UseRecurse, $Threshold, $HashAllCandidates, $CorePath, $ProgressQueue, $CancelState, $Extensions)
         Import-Module $CorePath -Force
         Start-DuplicateScanCore -RootPath $RootPath -UseRecurse $UseRecurse -Threshold $Threshold `
             -HashAllCandidates $HashAllCandidates -CorePath $CorePath -ProgressQueue $ProgressQueue `
-            -CancelFlag $CancelState
+            -CancelFlag $CancelState -Extensions $Extensions
     }) | Out-Null
 
-    $ps.AddArgument($RootPath).AddArgument($UseRecurse).AddArgument($Threshold).AddArgument($HashAllCandidates).AddArgument($corePath).AddArgument($script:ProgressQueue).AddArgument($script:CancelState) | Out-Null
+    $ps.AddArgument($RootPath).AddArgument($UseRecurse).AddArgument($Threshold).AddArgument($HashAllCandidates).AddArgument($corePath).AddArgument($script:ProgressQueue).AddArgument($script:CancelState).AddArgument($Extensions) | Out-Null
 
     $script:ActivePowerShell = $ps
     $script:ActiveJob = $ps.BeginInvoke()
@@ -354,6 +365,8 @@ function Undo-LastQuarantine {
                 <Button x:Name="btnCancelScan" Grid.Row="1" Grid.Column="6" Margin="18,10,0,0" Padding="18,6" Content="Cancel Scan" Background="#9CA3AF" Foreground="White" IsEnabled="False"/>
 
                 <WrapPanel Grid.Row="2" Grid.ColumnSpan="7" Margin="0,12,0,0">
+                    <TextBlock VerticalAlignment="Center" Margin="0,0,6,0" Text="File types:" Foreground="#111827"/>
+                    <TextBox x:Name="txtExtensions" VerticalAlignment="Center" Width="260" Height="26" Margin="0,0,20,0" Padding="6,3" Background="#FFFFFF" Foreground="#111827" BorderBrush="#94A3B8" ToolTip="Comma-separated file extensions to scan, e.g. mp3, flac, wav, m4a, ogg, wma, aac"/>
                     <CheckBox x:Name="chkRecurse" Margin="0,0,20,0" Content="Recurse subfolders" IsChecked="True" Foreground="#111827"/>
                     <CheckBox x:Name="chkHash" Margin="0,0,20,0" Content="Compute SHA256 for candidate matches" IsChecked="True" Foreground="#111827"/>
                     <Button x:Name="btnSelectHigh" Margin="0,0,12,0" Padding="12,6" Content="Select confidence &#8805; threshold" Background="#E5E7EB" Foreground="#111827"/>
@@ -422,6 +435,7 @@ $btnClearSelection = $window.FindName('btnClearSelection')
 $btnExport = $window.FindName('btnExport')
 $btnQuarantine = $window.FindName('btnQuarantine')
 $btnUndo = $window.FindName('btnUndo')
+$script:txtExtensions = $window.FindName('txtExtensions')
 $script:chkRecurse = $window.FindName('chkRecurse')
 $script:chkHash = $window.FindName('chkHash')
 $script:sldThreshold = $window.FindName('sldThreshold')
@@ -439,6 +453,7 @@ $script:chkRecurse.IsChecked = [bool]$script:Settings.Recurse
 $script:chkHash.IsChecked = [bool]$script:Settings.ComputeHash
 $script:sldThreshold.Value = [int]$script:Settings.Threshold
 $txtThresholdValue.Text = [string][int]$script:Settings.Threshold
+$script:txtExtensions.Text = [string]$script:Settings.FileExtensions
 
 $sldThreshold.Add_ValueChanged({ $txtThresholdValue.Text = [int]$sldThreshold.Value })
 
@@ -482,10 +497,16 @@ function Set-ScanUiState {
 $btnScan.Add_Click({
     try {
         Save-CurrentSettings
+        # Sanitize the free-text "File types" box here, at the GUI boundary,
+        # before it ever reaches a background runspace or the filesystem -
+        # see ConvertTo-ExtensionFilterList's SECURITY note in the Core
+        # module for why this specific function is the sanitization point.
+        $scanExtensions = ConvertTo-ExtensionFilterList -RawList $script:txtExtensions.Text
         Set-ScanUiState -Running $true
-        Write-UiLog "Scanning $($script:txtPath.Text)"
+        Write-UiLog "Scanning $($script:txtPath.Text) for: $($scanExtensions -join ', ')"
         Start-BackgroundScan -RootPath $script:txtPath.Text -UseRecurse ([bool]$script:chkRecurse.IsChecked) `
-            -Threshold ([int]$script:sldThreshold.Value) -HashAllCandidates ([bool]$script:chkHash.IsChecked)
+            -Threshold ([int]$script:sldThreshold.Value) -HashAllCandidates ([bool]$script:chkHash.IsChecked) `
+            -Extensions $scanExtensions
         $script:scanTimer.Start()
     } catch {
         Write-UiLog "Scan error: $($_.Exception.Message)"

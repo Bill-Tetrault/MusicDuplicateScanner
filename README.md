@@ -1,8 +1,10 @@
 # Music Duplicate Scanner
 
-A Windows WPF desktop tool that scans an MP3 library for likely duplicate
-files, scores each candidate pair by confidence, and lets you review, export,
-and safely quarantine (not permanently delete) the ones you don't want.
+A Windows WPF desktop tool that scans your music library for likely
+duplicate files, scores each candidate pair by confidence, and lets you
+review, export, and safely quarantine (not permanently delete) the ones you
+don't want. Scans MP3, FLAC, WAV, M4A, OGG, WMA, and AAC by default, and the
+file types it looks for are fully configurable.
 
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%2F%207-5391FE)
@@ -10,7 +12,9 @@ and safely quarantine (not permanently delete) the ones you don't want.
 
 ## Features
 
-- Recursive or top-level scan of a folder for `.mp3` files.
+- Recursive or top-level scan of a folder for configurable file types
+  (defaults to `mp3, flac, wav, m4a, ogg, wma, aac`; set your own
+  comma-separated list in the "File types" field).
 - Duplicate detection by:
   - Normalized filename similarity (Jaccard token overlap after stripping
     "copy"/"(1)"/track-number/etc. noise).

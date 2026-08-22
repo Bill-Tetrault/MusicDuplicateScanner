@@ -341,6 +341,114 @@ Describe 'Settings persistence' {
     It 'returns defaults when the settings file does not exist' {
         $settings = Import-AppSettings -Path (Join-Path ([System.IO.Path]::GetTempPath()) 'does-not-exist.json')
         $settings.Threshold | Should -Be 75
+        $settings.FileExtensions | Should -Be 'mp3, flac, wav, m4a, ogg, wma, aac'
+    }
+
+    It 'backfills FileExtensions for an older settings file saved before this field existed' {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "settings-legacy-$([guid]::NewGuid()).json"
+        try {
+            # Simulates a settings.json written by a pre-3.0.0 build, which
+            # has no FileExtensions key at all.
+            [pscustomobject]@{ LibraryPath = 'C:\Music'; QuarantinePath = ''; Recurse = $true; ComputeHash = $true; Threshold = 75 } |
+                ConvertTo-Json | Set-Content -LiteralPath $tmp -Encoding UTF8
+
+            $loaded = Import-AppSettings -Path $tmp
+            $loaded.FileExtensions | Should -Be 'mp3, flac, wav, m4a, ogg, wma, aac'
+        } finally {
+            Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'ConvertTo-ExtensionFilterList' {
+    It 'returns the default extension set for a null or empty input' {
+        (ConvertTo-ExtensionFilterList -RawList $null) | Should -Be @('mp3', 'flac', 'wav', 'm4a', 'ogg', 'wma', 'aac')
+        (ConvertTo-ExtensionFilterList -RawList '') | Should -Be @('mp3', 'flac', 'wav', 'm4a', 'ogg', 'wma', 'aac')
+        (ConvertTo-ExtensionFilterList -RawList '   ') | Should -Be @('mp3', 'flac', 'wav', 'm4a', 'ogg', 'wma', 'aac')
+    }
+
+    It 'parses a comma-separated list into bare lowercase extensions' {
+        (ConvertTo-ExtensionFilterList -RawList 'MP3,FLAC,Wav') | Should -Be @('mp3', 'flac', 'wav')
+    }
+
+    It 'tolerates leading dots, wildcards, semicolons, pipes, and extra whitespace' {
+        (ConvertTo-ExtensionFilterList -RawList '  .mp3 ; *.flac | wav   m4a  ') | Should -Be @('mp3', 'flac', 'wav', 'm4a')
+    }
+
+    It 'deduplicates case-insensitively while preserving first-seen order' {
+        (ConvertTo-ExtensionFilterList -RawList 'mp3,MP3,Mp3,flac') | Should -Be @('mp3', 'flac')
+    }
+
+    It 'drops tokens containing path separators, dot-dot, or other unsafe characters' {
+        # Note: splitting is whitespace/comma/semicolon/pipe-based, so a
+        # phrase like 'rm -rf' becomes two space-separated tokens ('rm' and
+        # '-rf') rather than one unsafe blob - '-rf' is correctly dropped
+        # (contains a hyphen), while the bare word 'rm' is kept because it IS
+        # a syntactically valid (if unusual) extension name; it is never
+        # executed or interpreted as a command, only compared against a
+        # file's Extension property, so this is safe by construction.
+        (ConvertTo-ExtensionFilterList -RawList 'mp3,..\..\windows,c:\evil,fl*ac,-rf,') | Should -Be @('mp3')
+    }
+
+    It 'drops tokens longer than 15 characters' {
+        $longToken = 'a' * 16
+        (ConvertTo-ExtensionFilterList -RawList "mp3,$longToken") | Should -Be @('mp3')
+    }
+
+    It 'falls back to defaults when every token is invalid' {
+        (ConvertTo-ExtensionFilterList -RawList '..\;***;///') | Should -Be @('mp3', 'flac', 'wav', 'm4a', 'ogg', 'wma', 'aac')
+    }
+
+    It 'caps the result at 50 extensions' {
+        $raw = (1..60 | ForEach-Object { "ext$_" }) -join ','
+        (ConvertTo-ExtensionFilterList -RawList $raw).Count | Should -Be 50
+    }
+
+    It 'honors a custom DefaultExtensions fallback' {
+        (ConvertTo-ExtensionFilterList -RawList '' -DefaultExtensions @('jpg', 'png')) | Should -Be @('jpg', 'png')
+    }
+}
+
+Describe 'Get-MusicFile' {
+    BeforeAll {
+        $script:mediaDir = Join-Path ([System.IO.Path]::GetTempPath()) "media-$([guid]::NewGuid())"
+        $script:mediaSubDir = Join-Path $script:mediaDir 'sub'
+        New-Item -ItemType Directory -Path $script:mediaSubDir -Force | Out-Null
+        'a' | Set-Content -LiteralPath (Join-Path $script:mediaDir 'song.mp3')
+        'b' | Set-Content -LiteralPath (Join-Path $script:mediaDir 'track.flac')
+        'c' | Set-Content -LiteralPath (Join-Path $script:mediaDir 'notes.txt')
+        'd' | Set-Content -LiteralPath (Join-Path $script:mediaSubDir 'nested.wav')
+        'e' | Set-Content -LiteralPath (Join-Path $script:mediaSubDir 'nested.mp3')
+    }
+
+    AfterAll {
+        Remove-Item -LiteralPath $script:mediaDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'matches only the default (mp3) extension when none is specified, non-recursive' {
+        $files = @(Get-MusicFile -RootPath $script:mediaDir -Recurse $false -Extensions @('mp3'))
+        $files.Count | Should -Be 1
+        $files[0].Name | Should -Be 'song.mp3'
+    }
+
+    It 'matches multiple configured extensions in a single non-recursive pass' {
+        $files = @(Get-MusicFile -RootPath $script:mediaDir -Recurse $false -Extensions @('mp3', 'flac'))
+        ($files.Name | Sort-Object) | Should -Be @('song.mp3', 'track.flac')
+    }
+
+    It 'matches multiple configured extensions recursively, including subfolders' {
+        $files = @(Get-MusicFile -RootPath $script:mediaDir -Recurse $true -Extensions @('mp3', 'flac', 'wav'))
+        ($files.Name | Sort-Object) | Should -Be @('nested.mp3', 'nested.wav', 'song.mp3', 'track.flac')
+    }
+
+    It 'is case-insensitive when matching extensions' {
+        $files = @(Get-MusicFile -RootPath $script:mediaDir -Recurse $false -Extensions @('MP3'))
+        $files.Count | Should -Be 1
+    }
+
+    It 'never matches an extension that was not requested' {
+        $files = @(Get-MusicFile -RootPath $script:mediaDir -Recurse $true -Extensions @('mp3', 'flac', 'wav'))
+        $files.Name | Should -Not -Contain 'notes.txt'
     }
 }
 

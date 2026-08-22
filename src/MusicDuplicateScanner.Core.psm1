@@ -56,10 +56,19 @@ function Test-TagLibSharpAvailable {
 function Get-AudioMetadata {
     <#
         .SYNOPSIS
-            Reads MP3 tag metadata via TagLibSharp. Falls back to a
+            Reads audio tag metadata via TagLibSharp. Falls back to a
             filename-derived title and a MetadataStatus of 'Unavailable'
             if TagLibSharp could not be loaded, so name-based duplicate
             detection still works without the DLL.
+
+        .NOTES
+            TagLibSharp's [TagLib.File]::Create() auto-detects the concrete
+            format from file content, not the extension, and already
+            supports MP3, FLAC, WAV, M4A/AAC, OGG, and WMA/ASF without any
+            per-format branching here - so this function needed no changes
+            to support the wider default extension list in
+            Get-DefaultAppSettings; only Get-MusicFile's enumeration was
+            MP3-only.
     #>
     [CmdletBinding()]
     param(
@@ -465,26 +474,94 @@ function Select-PreferredFile {
 # File enumeration & candidate pairing
 # ---------------------------------------------------------------------------
 
+function ConvertTo-ExtensionFilterList {
+    <#
+        .SYNOPSIS
+            Parses and sanitizes a user-supplied, free-text extension list
+            (comma/semicolon/space/pipe separated, with or without leading
+            dots or wildcards, any casing) into a clean, deduplicated array
+            of lowercase bare extensions (no dot) safe to use for file
+            enumeration.
+
+        .DESCRIPTION
+            SECURITY: this is the only place raw, user-controlled text from
+            the GUI's "File types" box (or a settings.json a user could hand
+            -edit) enters the file-enumeration path. Every token is matched
+            against a strict `^[A-Za-z0-9]{1,15}$` allow-list AFTER stripping
+            leading dots/wildcards/whitespace, so it is impossible to smuggle
+            path separators, `..`, wildcards, or PowerShell/regex metacharacters
+            through into a filesystem filter. Tokens that do not match are
+            silently dropped rather than throwing, so one bad token (e.g. a
+            stray comma) doesn't block an entire scan. The result is capped
+            at 50 extensions as a defense-in-depth bound against a pathological
+            input causing excessive enumeration passes. If every token is
+            invalid/empty, the caller's DefaultExtensions are returned so a
+            scan never silently matches zero files nor falls back to "all
+            files" (which would be a surprising, potentially destructive
+            behavior change for quarantine actions).
+
+        .OUTPUTS
+            string[] of lowercase bare extensions, e.g. @('mp3','flac').
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [string]$RawList,
+        [string[]]$DefaultExtensions = @('mp3', 'flac', 'wav', 'm4a', 'ogg', 'wma', 'aac')
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RawList)) { return $DefaultExtensions }
+
+    $tokens = $RawList -split '[,;|\s]+'
+    $clean = New-Object System.Collections.Generic.List[string]
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($token in $tokens) {
+        if ([string]::IsNullOrWhiteSpace($token)) { continue }
+
+        $candidate = $token.Trim().TrimStart('.', '*').ToLowerInvariant()
+        if ($candidate -notmatch '^[a-z0-9]{1,15}$') { continue }
+        if ($clean.Count -ge 50) { break }
+        if ($seen.Add($candidate)) { $clean.Add($candidate) }
+    }
+
+    if ($clean.Count -eq 0) { return $DefaultExtensions }
+    return $clean.ToArray()
+}
+
 function Get-MusicFile {
     <#
         .SYNOPSIS
-            Enumerates *.mp3 files under a root path, optionally recursing.
+            Enumerates library files under a root path matching the given
+            extensions, optionally recursing.
+
+        .DESCRIPTION
+            Takes a single Get-ChildItem pass (not one call per extension,
+            and not -Include, which silently no-ops unless combined with
+            -Recurse or a trailing '\*' on -Path - a real PowerShell
+            surprise that would otherwise make non-recursive multi-extension
+            scans quietly return zero files) and filters by extension
+            in-memory via a case-insensitive HashSet lookup, so adding more
+            extensions costs O(1) per file rather than another full
+            directory walk.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$RootPath,
-        [bool]$Recurse = $true
+        [bool]$Recurse = $true,
+        [string[]]$Extensions = @('mp3', 'flac', 'wav', 'm4a', 'ogg', 'wma', 'aac')
     )
+
+    $extSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$Extensions, [System.StringComparer]::OrdinalIgnoreCase)
 
     $params = @{
         Path         = $RootPath
-        Filter       = '*.mp3'
         File         = $true
         ErrorAction  = 'SilentlyContinue'
     }
     if ($Recurse) { $params.Recurse = $true }
 
-    Get-ChildItem @params
+    Get-ChildItem @params | Where-Object { $extSet.Contains($_.Extension.TrimStart('.')) }
 }
 
 function Get-DuplicateCandidatePair {
@@ -689,6 +766,7 @@ function Get-DefaultAppSettings {
         Recurse          = $true
         ComputeHash      = $true
         Threshold        = 75
+        FileExtensions   = 'mp3, flac, wav, m4a, ogg, wma, aac'
     }
 }
 
@@ -764,15 +842,23 @@ function Start-DuplicateScanCore {
         [bool]$HashAllCandidates,
         [string]$CorePath,
         [System.Collections.Concurrent.ConcurrentQueue[string]]$ProgressQueue,
-        [hashtable]$CancelFlag
+        [hashtable]$CancelFlag,
+        [string[]]$Extensions
     )
 
     if ([string]::IsNullOrWhiteSpace($RootPath)) { throw 'Library path is empty.' }
     if (-not (Test-Path -LiteralPath $RootPath)) { throw "Path does not exist: $RootPath" }
 
+    # Defense in depth: re-validate extensions here too, since this function
+    # is a public module entry point that other callers (scripts, future
+    # UIs) may invoke directly with unsanitized input, not only the GUI
+    # (which already sanitizes via ConvertTo-ExtensionFilterList before
+    # calling in). An empty/omitted array falls back to the module default.
+    $safeExtensions = ConvertTo-ExtensionFilterList -RawList ($Extensions -join ',')
+
     $ProgressQueue.Enqueue("Scanning $RootPath")
-    $files = @(Get-MusicFile -RootPath $RootPath -Recurse $UseRecurse)
-    $ProgressQueue.Enqueue("Found $($files.Count) candidate MP3 files")
+    $files = @(Get-MusicFile -RootPath $RootPath -Recurse $UseRecurse -Extensions $safeExtensions)
+    $ProgressQueue.Enqueue("Found $($files.Count) candidate file(s) matching: $($safeExtensions -join ', ')")
 
     $tagLibCandidates = @(
         (Join-Path (Split-Path $CorePath -Parent) 'TagLibSharp.dll'),
@@ -904,6 +990,7 @@ Export-ModuleMember -Function `
     Get-ConfidenceDetails, `
     Select-PreferredFile, `
     Get-MusicFile, `
+    ConvertTo-ExtensionFilterList, `
     Get-DuplicateCandidatePair, `
     Get-QuarantineDestinationPath, `
     Move-QuarantineBatchCore, `

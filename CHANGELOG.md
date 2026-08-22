@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.0.0
+
+Configurable file-type scanning, evaluated jointly from a DevSecOps and
+Marketing perspective before implementation (see rationale below).
+
+### Added
+- **Scan for any audio file type, not just MP3.** A new "File types" field
+  (GUI) / `-FileExtensions` parameter and `FileExtensions` setting lets you
+  choose which extensions to scan, comma-separated (e.g. `mp3, flac, wav`).
+  The default is now `mp3, flac, wav, m4a, ogg, wma, aac` instead of
+  MP3-only - existing users will see the broader set on first launch after
+  updating, and can narrow it back down to `mp3` in Settings if they only
+  want MP3s. TagLibSharp already reads tags for all of these formats
+  without any code changes to `Get-AudioMetadata`, and the
+  filename/hash/quarantine logic was already extension-agnostic.
+- New `ConvertTo-ExtensionFilterList` function (Core module, exported and
+  unit tested) parses and validates the free-text extension list: it
+  strips leading dots/wildcards, lowercases, dedupes, caps the list at 50
+  entries, and drops any token that isn't a plain `[a-z0-9]{1,15}` string
+  before it can reach file enumeration - so stray punctuation, path
+  separators, or `..` segments pasted into the field can never become a
+  filesystem filter. Sanitization happens both at the GUI boundary and
+  again inside `Start-DuplicateScanCore` (defense in depth, since the Core
+  module is a public entry point other scripts could call directly).
+- `Get-MusicFile` now takes an `-Extensions` array and matches all of them
+  in a single directory pass using a case-insensitive `HashSet` lookup on
+  each file's extension, rather than `-Include`, which was verified (via a
+  standalone empirical test) to silently return zero results for
+  non-recursive multi-pattern scans unless the path ends in a trailing
+  wildcard - a real PowerShell footgun this design avoids entirely.
+
+### Changed
+- `settings.json` files from earlier versions are auto-backfilled with the
+  new `FileExtensions` default the first time they're loaded (existing
+  `Import-AppSettings` merge logic already did this for any missing key,
+  no migration code needed).
+
+### Why extend this app instead of a separate video/image app
+- **DevSecOps view:** video and image dedupe need a different matching
+  model entirely (perceptual/frame hashing, resolution/codec scoring, much
+  larger file I/O) that the current byte-hash + tag-metadata engine and
+  background-runspace sizing weren't built for. Bolting that on here would
+  mean two half-tested matching engines in one codebase. A configurable
+  extension list for audio formats TagLibSharp already understands is a
+  small, fully-tested, no-new-dependency change by comparison.
+- **Marketing view:** "Music Duplicate Scanner" has a defensible niche
+  (tag-aware, bitrate-aware audio dedupe) that a generic rebrand would
+  dilute into a crowded field of general file-dedupe tools. Widening to
+  all common audio formats is a natural, marketable extension of the same
+  promise ("dedupe your whole music library, not just MP3s"); video/image
+  dedupe is a genuinely different product for a different buyer, worth a
+  separate app if pursued later rather than diluting this one now.
+
 ## 2.1.0
 
 Two feature additions on top of the 2.0.1 hotfix.
