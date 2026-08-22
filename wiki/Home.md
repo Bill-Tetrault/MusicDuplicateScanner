@@ -21,9 +21,19 @@ Welcome to the **MusicDuplicateScanner** wiki. Use the sidebar (or the links bel
 
 Music Duplicate Scanner is a Windows WPF desktop application written in PowerShell that finds likely-duplicate `.mp3` files in your library, scores each candidate pair by confidence, and lets you **quarantine** (not permanently delete) the ones you want removed — with a one-click undo.
 
-Key properties:
+### Key properties
 
 - **Non-destructive by design.** Files are moved to a quarantine folder that preserves your original subfolder structure. A per-run undo manifest lets you restore everything.
 - **Three detection strategies.** Filename similarity, ID3 tag metadata, and optional SHA-256 hash comparison — all combined into a single weighted confidence score.
 - **Background processing.** Scanning and hashing run off the UI thread. The window stays responsive with a live progress bar and a Cancel button.
 - **Settings persist.** Library path, quarantine path, threshold, and options are saved between launches under `%LOCALAPPDATA%\MusicDuplicateScanner\`.
+- **Live quarantine progress.** File moves report per-file status in a determinate progress bar, so you know exactly where a large batch stands.
+
+## Quick Start
+
+```powershell
+cd src
+.\MusicDuplicateScanner.ps1
+```
+
+See [Installation](Installation) for full prerequisites and [Usage Guide](Usage-Guide) for a step-by-step walkthrough.
