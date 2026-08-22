@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.0.1
+
+Bug-fix release, found from a real scan log against a 7,559-file library on
+a mapped network drive (M:\Music-Audio) with 0 matches at threshold 75.
+
+### Fixed
+- **Crash on any scan that finds 0 matches.** The results grid update threw
+  `Exception calling ".ctor" with "1" argument(s): "Value cannot be null.
+  (Parameter 'collection')"` whenever a scan completed with zero duplicate
+  pairs. `Sort-Object` emits no pipeline output at all for zero input items,
+  so the sorted variable became `$null`; casting `$null` to `[object[]]`
+  stays `$null` rather than becoming an empty array, so the
+  `ObservableCollection[object]` constructor received a literal null
+  argument and threw. Reproduced and confirmed in isolation before fixing;
+  fixed by forcing the sort result into a real (possibly empty) array with
+  `@(...)`.
+- **Misleading hash-failure message masked the real cause.** A transient
+  file-read error during SHA-256 hashing (e.g. `An unexpected network error
+  occurred` on a network drive) was logged as `The property 'Hash' cannot
+  be found on this object. Verify that the property exists.` instead of the
+  actual I/O error. `Get-FileHash` writes I/O failures as a non-terminating
+  error and returns nothing for that file; without `-ErrorAction Stop`, the
+  real error never reached the `catch` block - instead the empty result's
+  `.Hash` property access itself threw under this module's
+  `Set-StrictMode -Version Latest`, masking the true cause. Fixed by adding
+  `-ErrorAction Stop` to `Get-FileHash` so the actual exception is what gets
+  caught and logged; hash failures still degrade gracefully (a `$null`
+  hash for that file, scan continues) - only the logged message changed.
+
+Added a Pester regression test (mocked `Get-FileHash` failure) confirming
+the real error message now surfaces. All 54 tests pass; 0
+PSScriptAnalyzer findings.
+
 ## 3.0.0
 
 Configurable file-type scanning, evaluated jointly from a DevSecOps and

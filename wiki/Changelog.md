@@ -4,6 +4,19 @@ Full version history for Music Duplicate Scanner. Follows [Keep a Changelog](htt
 
 ---
 
+## v3.0.1
+
+Bug-fix release, found from a real scan log on a large network-drive library.
+
+### Fixed
+
+- Fixed a crash (`Value cannot be null. (Parameter 'collection')`) that hit any scan completing with 0 matches.
+- Fixed a misleading `Hash failed for ... : The property 'Hash' cannot be found on this object` log message that masked the real cause (e.g. a transient network-drive read error) during SHA-256 hashing.
+
+See the main repo [CHANGELOG.md](https://github.com/Bill-Tetrault/MusicDuplicateScanner/blob/main/CHANGELOG.md) for full technical detail.
+
+---
+
 ## v3.0.0
 
 ### Added
